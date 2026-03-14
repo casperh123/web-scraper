@@ -6,8 +6,8 @@ use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 
 use crate::crawler::filter::should_crawl;
 
-pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>) {
-    let semaphore = Arc::new(Semaphore::new(300));
+pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled: UnboundedSender<Url>) {
+    let semaphore = Arc::new(Semaphore::new(1000));
             let mut crawled_count = 0;
 
     let seeds = get_seeds();
@@ -21,6 +21,8 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
         let raw_sender = raw_tx.clone();
         let client = client.clone();
 
+        let _ = crawled.send(domain_to_crawl.clone());
+
         crawled_count += 1;
 
         println!("Queued: {}", filtered_rx.len());
@@ -31,7 +33,6 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
             crawl_domain(client, domain_to_crawl, raw_sender).await;
             drop(permit);
         });
-
     }
 }
 
