@@ -1,16 +1,16 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use lol_html::{HtmlRewriter, Settings, element};
 use reqwest::{Client, Url};
 use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 
-use crate::crawler::filter::should_crawl;
+use crate::crawler::{crawl_result::CrawlResult, filter::should_crawl};
 
-pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled: UnboundedSender<Url>) {
-    let semaphore = Arc::new(Semaphore::new(1000));
-            let mut crawled_count = 0;
-
+pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled: UnboundedSender<CrawlResult>) {
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut crawled_count = 0;
     let seeds = get_seeds();
+    
     for seed in seeds {
         let _ = raw_tx.send(seed); 
     }
@@ -19,9 +19,8 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let domain_to_crawl: Url = filtered_rx.recv().await.expect("Could not get Url from Orc Channel");
         let raw_sender = raw_tx.clone();
+        let crawled = crawled.clone();
         let client = client.clone();
-
-        let _ = crawled.send(domain_to_crawl.clone());
 
         crawled_count += 1;
 
@@ -30,19 +29,26 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
         println!("Crawled: {}", crawled_count);
 
         tokio::spawn(async move {
-            crawl_domain(client, domain_to_crawl, raw_sender).await;
+            crawl_domain(client, domain_to_crawl, raw_sender, crawled).await;
             drop(permit);
         });
     }
 }
 
-pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channel: UnboundedSender<Url>) {
+pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channel: UnboundedSender<Url>, crawled: UnboundedSender<CrawlResult>){
     let mut seen: HashSet<Url> = HashSet::new();
     let mut links: Vec<Url> = vec![domain.clone()];
-
+    let mut total_time_ms = 0;
+    let mut links_crawled = 0;
     
     while let Some(link_to_crawl) = links.pop() {
-        let new_links = get_links(&client, &link_to_crawl).await;
+        let (new_links, ttfb) = match get_links(&client, &link_to_crawl).await {
+            Some((links, ttfb)) => (links, ttfb),
+            None => continue
+        };
+
+        links_crawled += 1;
+        total_time_ms += ttfb;
         
         for link in new_links {
             if link.host() != domain.host() {
@@ -55,11 +61,28 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
             }
         }
     }
+    
+    let average_ttfb_ms = match links_crawled {
+        0 => 0,
+        _ => total_time_ms / links_crawled
+    };
+
+    let results = CrawlResult {
+        url: domain.to_string(),
+        average_ttfb_ms: average_ttfb_ms as i32,
+        links_crawled: links_crawled as i32
+    };
+
+    let _ = crawled.send(results);
 }
 
-async fn get_links(client: &Client, url: &Url) -> Vec<Url> {
-    let Ok(response) = client.get(url.clone()).send().await else { return vec![] };
-    let Ok(body) = response.bytes().await else { return vec![] };
+async fn get_links(client: &Client, url: &Url) -> Option<(Vec<Url>, u128)> {
+    let request_begin = Instant::now();
+
+    let Ok(response) = client.get(url.clone()).send().await else { return None };
+    let Ok(body) = response.bytes().await else { return None };
+
+    let ttfb = request_begin.elapsed().as_millis();
 
     let mut found_urls: Vec<Url> = Vec::new();
     let urls_ptr = &mut found_urls as *mut Vec<Url>;
@@ -86,7 +109,7 @@ async fn get_links(client: &Client, url: &Url) -> Vec<Url> {
     let _ = rewriter.write(&body);
     let _ = rewriter.end();
 
-    found_urls
+    Some((found_urls, ttfb))
 }
 
 fn get_seeds() -> Vec<Url> {

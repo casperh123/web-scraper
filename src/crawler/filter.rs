@@ -13,7 +13,7 @@ pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_s
         };
 
         let host = match url.host_str() {
-            Some(h) => h.to_string(),
+            Some(h) => h.trim_start_matches("www.").to_string(),
             None => continue,
         };
 
