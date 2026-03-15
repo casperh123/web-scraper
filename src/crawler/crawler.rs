@@ -7,10 +7,10 @@ use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 use crate::crawler::{crawl_result::CrawlResult, filter::should_crawl};
 
 pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled: UnboundedSender<CrawlResult>) {
-    let semaphore = Arc::new(Semaphore::new(500));
-            let mut crawled_count = 0;
-
+    let semaphore = Arc::new(Semaphore::new(100));
+    let mut crawled_count = 0;
     let seeds = get_seeds();
+    
     for seed in seeds {
         let _ = raw_tx.send(seed); 
     }
@@ -36,13 +36,18 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
 }
 
 pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channel: UnboundedSender<Url>, crawled: UnboundedSender<CrawlResult>){
-    let mut seen: HashSet<Url> = HashSet::new();
-    let mut links: Vec<Url> = vec![domain.clone()];
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut links: Vec<String> = vec!["/".to_string()];
     let mut total_time_ms = 0;
     let mut links_crawled = 0;
     
     while let Some(link_to_crawl) = links.pop() {
-        let (new_links, ttfb) = match get_links(&client, &link_to_crawl).await {
+        let full_link = match domain.join(&link_to_crawl) {
+            Ok(url) => url,
+            Err(_) => continue,
+        };
+
+        let (new_links, ttfb) = match get_links(&client, &full_link).await {
             Some((links, ttfb)) => (links, ttfb),
             None => continue
         };
@@ -51,13 +56,21 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
         total_time_ms += ttfb;
         
         for link in new_links {
-            if link.host() != domain.host() {
-                let _ = found_domains_channel.send(link);
-                continue;
-            }
-
-            if should_crawl(&link) && seen.insert(link.clone()) {
-                links.push(link);
+            
+            match should_crawl(domain.authority(), &link) {
+                Some(url) => {
+                    if url.host() != domain.host() {
+                        let _ = found_domains_channel.send(url);
+                        continue;
+                    } 
+                    let path = url.path().to_string();
+                    
+                    if !seen.contains(&path) {
+                        seen.insert(path.clone());
+                        links.push(path);
+                    }                
+                },
+                _ => continue
             }
         }
     }
@@ -76,7 +89,7 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
     let _ = crawled.send(results);
 }
 
-async fn get_links(client: &Client, url: &Url) -> Option<(Vec<Url>, u128)> {
+async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, u128)> {
     let request_begin = Instant::now();
 
     let Ok(response) = client.get(url.clone()).send().await else { return None };
@@ -84,20 +97,14 @@ async fn get_links(client: &Client, url: &Url) -> Option<(Vec<Url>, u128)> {
 
     let ttfb = request_begin.elapsed().as_millis();
 
-    let mut found_urls: Vec<Url> = Vec::new();
-    let urls_ptr = &mut found_urls as *mut Vec<Url>;
-    let base_url = url.clone();
+    let mut found_urls: Vec<String> = Vec::new();
+    let urls_ptr = &mut found_urls as *mut Vec<String>;
 
     let mut rewriter = HtmlRewriter::new(
         Settings{
             element_content_handlers: vec![element!("a[href]", move |el| {
                 if let Some(link) = el.get_attribute("href") {
-                    let resolved = Url::parse(&link)
-                        .ok()
-                        .or_else(|| base_url.join(&link).ok());
-                    if let Some(resolved_url) = resolved {
-                        unsafe { (*urls_ptr).push(resolved_url) };
-                    }
+                    unsafe { (*urls_ptr).push(link) };
                 }
                 Ok(())
             })],

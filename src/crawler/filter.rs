@@ -28,20 +28,55 @@ pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_s
     }
 }
 
-pub fn should_crawl(url: &Url) -> bool {
+pub fn should_crawl(base_url: &str, url: &str) -> Option<Url> {
+    let url = Url::parse(url)
+        .ok()
+        .or_else(|| Url::parse(base_url).ok()?.join(url).ok())?;
+
     if url.fragment().is_some() {
-        return false;
+        return None;
     }
-    if url.query().is_some() {
-        return false;
+    if !has_crawlable_query(&url) {
+        return None;
     }
-    if is_image_or_file(url) {
-        return false;
+    if is_image_or_file(&url) {
+        return None;
     }
     if !url.host_str().map(|h| h.ends_with(".dk")).unwrap_or(false) {
-        return false;
+        return None;
    }
-    true
+    Some(url)
+}
+
+fn has_crawlable_query(url: &Url) -> bool {
+    let Some(query) = url.query() else { return true };
+    
+    if query.is_empty() { return true; }
+    
+    const NAVIGATION_PARAMS: [&str; 18] = [
+        "page",
+        "p",
+        "id",
+        "category",
+        "cat",
+        "tag",
+        "type",
+        "section",
+        "topic",
+        "subject",
+        "year",
+        "month",
+        "lang",
+        "language",
+        "view",
+        "tab",
+        "step",
+        "chapter",
+    ];
+    
+    url.query_pairs().all(|(key, _)| {
+        NAVIGATION_PARAMS.iter().any(|&p| key.as_ref() == p)
+    })
 }
 
 fn is_image_or_file(url: &Url) -> bool {
