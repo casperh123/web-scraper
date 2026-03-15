@@ -7,10 +7,10 @@ use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 use crate::crawler::{crawl_result::CrawlResult, filter::should_crawl};
 
 pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled: UnboundedSender<CrawlResult>) {
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut crawled_count = 0;
+    let semaphore = Arc::new(Semaphore::new(500));
+            let mut crawled_count = 0;
+
     let seeds = get_seeds();
-    
     for seed in seeds {
         let _ = raw_tx.send(seed); 
     }

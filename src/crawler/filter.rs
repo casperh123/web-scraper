@@ -22,10 +22,6 @@ pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_s
             Err(_) => continue,
         };
 
-        if ! should_crawl(&host_url) {
-            continue;
-        }
-
         if seen.insert(host) {
             let _ = filtered_sender.send(host_url);
         }
