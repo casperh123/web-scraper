@@ -1,15 +1,14 @@
-use std::collections::HashSet;
-
+use bloomfilter::Bloom;
 use reqwest::Url;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_sender: UnboundedSender<Url>) {
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: Bloom<String> = Bloom::new_for_fp_rate(1_000_000, 0.01).unwrap();
     
     loop {
         let url = match raw_receiver.recv().await {
             Some(url) => url,
-            None => return,
+            None => continue,
         };
 
         let host = match url.host_str() {
@@ -22,7 +21,7 @@ pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_s
             Err(_) => continue,
         };
 
-        if seen.insert(host) {
+        if !seen.check_and_set(&host) {
             let _ = filtered_sender.send(host_url);
         }
     }

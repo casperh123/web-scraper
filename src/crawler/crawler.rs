@@ -1,5 +1,6 @@
 use std::{collections::HashSet, sync::Arc, time::Instant};
 
+use bloomfilter::Bloom;
 use lol_html::{HtmlRewriter, Settings, element};
 use reqwest::{Client, Url};
 use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
@@ -36,7 +37,7 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
 }
 
 pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channel: UnboundedSender<Url>, crawled: UnboundedSender<CrawlResult>){
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: Bloom<String> = Bloom::new_for_fp_rate(100_000, 0.01).unwrap();
     let mut links: Vec<String> = vec!["/".to_string()];
     let mut total_time_ms = 0;
     let mut links_crawled = 0;
@@ -62,16 +63,20 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
                     if url.host() != domain.host() {
                         let _ = found_domains_channel.send(url);
                         continue;
-                    } 
+                    }
+
                     let path = url.path().to_string();
                     
-                    if !seen.contains(&path) {
-                        seen.insert(path.clone());
+                    if links.len() < 1000 && !seen.check_and_set(&path) {
                         links.push(path);
                     }                
                 },
                 _ => continue
             }
+        }
+
+        if links_crawled > 1000 {
+            break;
         }
     }
     
@@ -82,20 +87,20 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
 
     let results = CrawlResult {
         url: domain.to_string(),
-        average_ttfb_ms: average_ttfb_ms as i32,
-        links_crawled: links_crawled as i32
+        average_ttfb_ms: average_ttfb_ms,
+        links_crawled: links_crawled
     };
 
     let _ = crawled.send(results);
 }
 
-async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, u128)> {
+async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, i32)> {
     let request_begin = Instant::now();
 
     let Ok(response) = client.get(url.clone()).send().await else { return None };
     let Ok(body) = response.bytes().await else { return None };
 
-    let ttfb = request_begin.elapsed().as_millis();
+    let ttfb = request_begin.elapsed().as_millis() as i32;
 
     let mut found_urls: Vec<String> = Vec::new();
     let urls_ptr = &mut found_urls as *mut Vec<String>;
