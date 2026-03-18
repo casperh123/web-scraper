@@ -1,26 +1,25 @@
-use std::{collections::HashSet, sync::Arc, time::Instant};
-
+use std::{sync::Arc, time::Instant};
 use bloomfilter::Bloom;
-use lol_html::{HtmlRewriter, Settings, element};
-use reqwest::{Client, Url};
+use reqwest::{Client, Response, Url, header::CONTENT_TYPE};
+use tl::ParserOptions;
 use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 
 use crate::crawler::{crawl_result::CrawlResult, filter::should_crawl};
 
-pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled: UnboundedSender<CrawlResult>) {
-    let semaphore = Arc::new(Semaphore::new(100));
+pub async fn crawl_from_seed(client: Arc<Client>, raw_channel_tx: UnboundedSender<Url>, mut filtered_rx: UnboundedReceiver<Url>, crawled_channel_tx: UnboundedSender<CrawlResult>) {
+    let semaphore = Arc::new(Semaphore::new(10));
     let mut crawled_count = 0;
     let seeds = get_seeds();
     
     for seed in seeds {
-        let _ = raw_tx.send(seed); 
+        let _ = raw_channel_tx.send(seed); 
     }
 
     loop {
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let domain_to_crawl: Url = filtered_rx.recv().await.expect("Could not get Url from Orc Channel");
-        let raw_sender = raw_tx.clone();
-        let crawled = crawled.clone();
+        let raw_tx = raw_channel_tx.clone();
+        let crawled_tx = crawled_channel_tx.clone();
         let client = client.clone();
 
         crawled_count += 1;
@@ -30,7 +29,7 @@ pub async fn crawl_from_seed(client: Arc<Client>, raw_tx: UnboundedSender<Url>, 
         println!("Crawled: {}", crawled_count);
 
         tokio::spawn(async move {
-            crawl_domain(client, domain_to_crawl, raw_sender, crawled).await;
+            crawl_domain(client, domain_to_crawl, raw_tx, crawled_tx).await;
             drop(permit);
         });
     }
@@ -69,13 +68,13 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
                     
                     if links.len() < 1000 && !seen.check_and_set(&path) {
                         links.push(path);
-                    }                
+                     }                
                 },
                 _ => continue
             }
         }
 
-        if links_crawled > 1000 {
+        if links_crawled > 10000 {
             break;
         }
     }
@@ -96,32 +95,46 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
 
 async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, i32)> {
     let request_begin = Instant::now();
-
     let Ok(response) = client.get(url.clone()).send().await else { return None };
-    let Ok(body) = response.bytes().await else { return None };
-
     let ttfb = request_begin.elapsed().as_millis() as i32;
 
-    let mut found_urls: Vec<String> = Vec::new();
-    let urls_ptr = &mut found_urls as *mut Vec<String>;
+    if abort_parsing(&response) {
+        println!("Aborted parsing");
+        return None
+    }
 
-    let mut rewriter = HtmlRewriter::new(
-        Settings{
-            element_content_handlers: vec![element!("a[href]", move |el| {
-                if let Some(link) = el.get_attribute("href") {
-                    unsafe { (*urls_ptr).push(link) };
-                }
-                Ok(())
-            })],
-            ..Settings::default()
-        },
-        |_: &[u8]| (),
-    );
+    let Ok(body) = response.text().await else { return None };
+    
+    let Ok(dom) = tl::parse(&body, ParserOptions::default()) else { return None };
+    let parser = dom.parser();
 
-    let _ = rewriter.write(&body);
-    let _ = rewriter.end();
+    let found_urls = dom
+        .query_selector("a[href]")?
+        .filter_map(|handle| {
+            let node = handle.get(parser)?;
+            let tag = node.as_tag()?;
+            let href = tag.attributes().get("href")??.as_utf8_str().to_string();
+            Some(href)
+        })
+        .collect::<Vec<String>>();
 
     Some((found_urls, ttfb))
+}
+
+fn abort_parsing(response: &Response) -> bool {
+
+    let content_length = response.content_length().unwrap_or(1024 * 1024);
+    let content_type = response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+
+    if content_length > 1024 * 1024 * 10 {
+        return true
+    }
+
+    if !content_type.contains("text/html") {
+        return true
+    }
+
+    false
 }
 
 fn get_seeds() -> Vec<Url> {

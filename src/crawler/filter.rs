@@ -8,7 +8,7 @@ pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_s
     loop {
         let url = match raw_receiver.recv().await {
             Some(url) => url,
-            None => continue,
+            None => return,
         };
 
         let host = match url.host_str() {
@@ -79,7 +79,12 @@ fn has_crawlable_query(url: &Url) -> bool {
 }
 
 fn is_image_or_file(url: &Url) -> bool {
-    const FORBIDDEN_EXTENSIONS: [&str; 10] = ["jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "pdf", "zip"];
+    const FORBIDDEN_EXTENSIONS: [&str; 24] = [
+        "jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp",
+        "pdf", "zip", "gz", "tar", "rar",
+        "mp4", "mp3", "wav", "avi", "mov",
+        "css", "js", "json", "xml", "rss", "atom",
+    ];
 
     url.path()
         .rsplit('.')
