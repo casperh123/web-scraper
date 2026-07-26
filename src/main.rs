@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use crawler_demo::{crawler::{crawl_result::CrawlResult, crawler::crawl_from_seed, discovery::filter_domains, seeds::get_seeds}, db::operations::add_website};
 use reqwest::{Client};
 use sea_orm::{Database, DbConn};
@@ -6,7 +6,15 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 #[tokio::main]
 async fn main() {
-    let client = Arc::new(Client::new());
+    let client = Arc::new(
+        Client::builder()
+            .timeout(Duration::from_secs(30))
+            .hickory_dns(true)
+            .build()
+            .expect("failed to build reqwest client")
+    );
+
+    env_logger::init();   
 
     let db: DbConn = Database::connect("postgresql://crawler:crawler@localhost:5432/crawler")
         .await
@@ -33,3 +41,5 @@ async fn save_websites(db: DbConn, mut crawled: UnboundedReceiver<CrawlResult>) 
         add_website(&db, crawled_domain.url, crawled_domain.average_ttfb_ms, crawled_domain.links_crawled).await;
     }
 }
+
+

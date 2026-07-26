@@ -1,10 +1,10 @@
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, time::{Duration, Instant}};
 use bloomfilter::Bloom;
 use reqwest::{Client, Response, Url, header::CONTENT_TYPE};
 use tl::ParserOptions;
 use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 
-use crate::{crawler::crawl_result::CrawlResult, url_rules::should_crawl};
+use crate::{crawler::crawl_result::CrawlResult, url_rules::{filter::resolve, should_crawl}};
 
 pub async fn crawl_from_seed(
     client: Arc<Client>, 
@@ -35,9 +35,7 @@ pub async fn crawl_from_seed(
 
         crawled_count += 1;
 
-        println!("Queued: {}", filtered_rx.len());
-        println!("Available permits: {}", semaphore.available_permits());
-        println!("Crawled: {}", crawled_count);
+        log::info!("Total crawled: {}, Permit granted for: {}", crawled_count, domain_to_crawl);
 
         tokio::spawn(async move {
             crawl_domain(client, domain_to_crawl, raw_tx, crawled_tx).await;
@@ -67,25 +65,25 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
         total_time_ms += ttfb;
         
         for link in new_links {
-            
-            match should_crawl(full_link.as_str(), &link) {
-                Some(url) => {
-                    if url.host() != domain.host() {
-                        let _ = found_domains_channel.send(url);
-                        continue;
-                    }
 
-                    let path = url.path().to_string();
-                    
-                    if links.len() < 1000 && !seen.check_and_set(&path) {
-                        links.push(path);
-                     }                
-                },
-                _ => continue
+            let Some(resolved_url) = resolve(&domain, &link) else { continue };
+
+            if !should_crawl(&resolved_url) {
+                continue;
+            }
+
+            if resolved_url.host() != domain.host() {
+                let _ = found_domains_channel.send(resolved_url);
+            } else {
+                let path = resolved_url.path().to_string();
+            
+                if links.len() < 1000 && !seen.check_and_set(&path) {
+                    links.push(path);
+                }
             }
         }
 
-        if links_crawled > 10000 {
+        if links_crawled > 50000 {
             break;
         }
     }
@@ -106,16 +104,21 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
 
 async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, i32)> {
     let request_begin = Instant::now();
-    let Ok(response) = client.get(url.clone()).send().await else { return None };
+   let response = match client.get(url.clone()).send().await {
+    Ok(resp) => resp,
+    Err(e) => {
+        log::warn!("fetch failed for {url}: {e:?}");
+        return None;
+    }
+};
     let ttfb = request_begin.elapsed().as_millis() as i32;
 
     if abort_parsing(&response) {
-        println!("Aborted parsing");
         return None
     }
 
     let Ok(body) = response.text().await else { return None };
-    
+
     let Ok(dom) = tl::parse(&body, ParserOptions::default()) else { return None };
     let parser = dom.parser();
 
@@ -137,10 +140,12 @@ fn abort_parsing(response: &Response) -> bool {
     let content_type = response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
 
     if content_length > 1024 * 1024 * 1024 {
+        log::warn!("Aborted: Too large");
         return true
     }
 
     if !content_type.contains("text/html") {
+        log::warn!("Aborted: Not HTML, but {}", content_type);
         return true
     }
 
