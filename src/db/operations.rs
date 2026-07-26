@@ -1,5 +1,5 @@
 use sea_orm::{ActiveValue::Set, ActiveModelTrait, DbConn, EntityTrait};
-use crate::db::website::{ActiveModel, Entity as Website, Model}; 
+use crate::models::website::{ActiveModel, Entity as Website, Model}; 
 
 
 pub async fn get_websites(db: &DbConn) -> Vec<Model> {

@@ -1,13 +1,8 @@
 use std::sync::Arc;
+use crawler_demo::{crawler::{crawl_result::CrawlResult, crawler::crawl_from_seed, discovery::filter_domains, seeds::get_seeds}, db::operations::add_website};
 use reqwest::{Client};
 use sea_orm::{Database, DbConn};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
-use crate::crawler::crawl_result::CrawlResult;
-use crate::crawler::{crawler::crawl_from_seed, filter::filter_domains};
-use crate::db::operations::add_website;
-
-mod db;
-mod crawler;
 
 #[tokio::main]
 async fn main() {
@@ -29,7 +24,7 @@ async fn main() {
     tokio::spawn(filter_domains(raw_rx, filtered_tx));
     tokio::spawn(save_websites(db, crawled_rx));
 
-    crawl_from_seed(client, raw_tx, filtered_rx, crawled_tx).await;
+    crawl_from_seed(client, raw_tx, filtered_rx, crawled_tx, get_seeds()).await;
 }
 
 async fn save_websites(db: DbConn, mut crawled: UnboundedReceiver<CrawlResult>) {
