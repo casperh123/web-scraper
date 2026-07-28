@@ -1,10 +1,10 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{sync::Arc, time::{Instant}};
 use bloomfilter::Bloom;
 use reqwest::{Client, Response, Url, header::CONTENT_TYPE};
 use tl::ParserOptions;
 use tokio::sync::{Semaphore, mpsc::{UnboundedReceiver, UnboundedSender}};
 
-use crate::{crawler::crawl_result::CrawlResult, url_rules::{filter::resolve, should_crawl}};
+use crate::{crawler::crawl_result::CrawlResult, url_rules::{filter::resolve_full_url, should_crawl}};
 
 pub async fn crawl_from_seed(
     client: Arc<Client>, 
@@ -56,8 +56,28 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
             Err(_) => continue,
         };
 
-        let (new_links, ttfb) = match get_links(&client, &full_link).await {
-            Some((links, ttfb)) => (links, ttfb),
+        let (response, ttfb) = match request_page(&client, &full_link).await {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("fetch failed for {full_link}: {e:?}");
+                continue;
+            }
+        };
+
+        if abort_parsing(&response) {
+            continue;
+        }
+
+        let response_body = match response.text().await {
+            Ok(body) => body,
+            Err(e) => {
+                log::warn!("Failed to parse body for {full_link}: {e:?}");
+                continue;
+            },
+        };
+
+        let new_links = match get_links(response_body).await {
+            Some(links) => links,
             None => continue
         };
 
@@ -66,7 +86,7 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
         
         for link in new_links {
 
-            let Some(resolved_url) = resolve(&domain, &link) else { continue };
+            let Some(resolved_url) = resolve_full_url(&domain, &link) else { continue };
 
             if !should_crawl(&resolved_url) {
                 continue;
@@ -77,14 +97,11 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
             } else {
                 let path = resolved_url.path().to_string();
             
-                if links.len() < 1000 && !seen.check_and_set(&path) {
+                let already_seen = seen.check_and_set(&path);
+                if !already_seen && links.len() < 1000 {
                     links.push(path);
-                }
+                }            
             }
-        }
-
-        if links_crawled > 50000 {
-            break;
         }
     }
     
@@ -102,24 +119,16 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
     let _ = crawled.send(results);
 }
 
-async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, i32)> {
+async fn request_page(client: &Client, url: &Url) -> Result<(Response, i32), reqwest::Error> {
     let request_begin = Instant::now();
-   let response = match client.get(url.clone()).send().await {
-    Ok(resp) => resp,
-    Err(e) => {
-        log::warn!("fetch failed for {url}: {e:?}");
-        return None;
-    }
-};
-    let ttfb = request_begin.elapsed().as_millis() as i32;
+    let response = client.get(url.clone()).send().await;
+    let ttfb = request_begin.elapsed().as_millis() as i32; 
 
-    if abort_parsing(&response) {
-        return None
-    }
+    Ok((response?, ttfb))
+}
 
-    let Ok(body) = response.text().await else { return None };
-
-    let Ok(dom) = tl::parse(&body, ParserOptions::default()) else { return None };
+async fn get_links(response: String) -> Option<Vec<String>> {
+    let Ok(dom) = tl::parse(&response, ParserOptions::default()) else { return None };
     let parser = dom.parser();
 
     let found_urls = dom
@@ -132,7 +141,7 @@ async fn get_links(client: &Client, url: &Url) -> Option<(Vec<String>, i32)> {
         })
         .collect::<Vec<String>>();
 
-    Some((found_urls, ttfb))
+    Some(found_urls)
 }
 
 fn abort_parsing(response: &Response) -> bool {

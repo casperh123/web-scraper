@@ -2,7 +2,7 @@ use reqwest::Url;
 
 use crate::url_rules::{extension::is_image_or_file, query::has_crawlable_query};
 
-pub fn resolve(base: &Url, link: &str) -> Option<Url> {
+pub fn resolve_full_url(base: &Url, link: &str) -> Option<Url> {
     Url::parse(link).ok().or_else(|| base.join(&link).ok())
 }
 
