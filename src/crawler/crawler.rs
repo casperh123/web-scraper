@@ -45,7 +45,7 @@ pub async fn crawl_from_seed(
 }
 
 pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channel: UnboundedSender<Url>, crawled: UnboundedSender<CrawlResult>){
-    let mut seen: Bloom<String> = Bloom::new_for_fp_rate(100_000, 0.01).unwrap();
+    let mut seen: Bloom<str> = Bloom::new_for_fp_rate(100_000, 0.01).unwrap();
     let mut links: Vec<String> = vec!["/".to_string()];
     let mut total_time_ms = 0;
     let mut links_crawled = 0;
@@ -76,33 +76,12 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
             },
         };
 
-        let new_links = match get_links(response_body).await {
-            Some(links) => links,
-            None => continue
-        };
+        if process_links(&response_body, &domain, &mut seen, &mut links, &found_domains_channel).is_none() {
+            continue;
+        }
 
         links_crawled += 1;
         total_time_ms += ttfb;
-        
-        for link in new_links {
-
-            let Some(resolved_url) = resolve_full_url(&domain, &link) else { continue };
-
-            if !should_crawl(&resolved_url) {
-                continue;
-            }
-
-            if resolved_url.host() != domain.host() {
-                let _ = found_domains_channel.send(resolved_url);
-            } else {
-                let path = resolved_url.path().to_string();
-            
-                let already_seen = seen.check_and_set(&path);
-                if !already_seen && links.len() < 1000 {
-                    links.push(path);
-                }            
-            }
-        }
     }
     
     let average_ttfb_ms = match links_crawled {
@@ -112,8 +91,8 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
 
     let results = CrawlResult {
         url: domain.to_string(),
-        average_ttfb_ms: average_ttfb_ms,
-        links_crawled: links_crawled
+        average_ttfb_ms,
+        links_crawled,
     };
 
     let _ = crawled.send(results);
@@ -127,21 +106,38 @@ async fn request_page(client: &Client, url: &Url) -> Result<(Response, i32), req
     Ok((response?, ttfb))
 }
 
-async fn get_links(response: String) -> Option<Vec<String>> {
-    let Ok(dom) = tl::parse(&response, ParserOptions::default()) else { return None };
+fn process_links(
+    body: &str,
+    domain: &Url,
+    seen: &mut Bloom<str>,
+    links: &mut Vec<String>,
+    found_domains_channel: &UnboundedSender<Url>,
+) -> Option<()> {
+    let dom = tl::parse(body, ParserOptions::default()).ok()?;
     let parser = dom.parser();
 
-    let found_urls = dom
-        .query_selector("a[href]")?
-        .filter_map(|handle| {
-            let node = handle.get(parser)?;
-            let tag = node.as_tag()?;
-            let href = tag.attributes().get("href")??.as_utf8_str().to_string();
-            Some(href)
-        })
-        .collect::<Vec<String>>();
+    for handle in dom.query_selector("a[href]")? {
+        let Some(node) = handle.get(parser) else { continue };
+        let Some(tag) = node.as_tag() else { continue };
+        let Some(Some(href_bytes)) = tag.attributes().get("href") else { continue };
+        let href = href_bytes.as_utf8_str(); 
+        let Some(resolved_url) = resolve_full_url(domain, &href) else { continue };
 
-    Some(found_urls)
+        if !should_crawl(&resolved_url) {
+            continue;
+        }
+
+        if resolved_url.host() != domain.host() {
+            let _ = found_domains_channel.send(resolved_url);
+        } else {
+            let path = resolved_url.path();
+            if !seen.check_and_set(path) && links.len() < 1000 {
+                links.push(path.to_string());            
+            }
+        }
+    }
+
+    Some(())
 }
 
 fn abort_parsing(response: &Response) -> bool {

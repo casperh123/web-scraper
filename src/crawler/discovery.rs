@@ -11,12 +11,10 @@ pub async fn filter_domains(mut raw_receiver: UnboundedReceiver<Url>, filtered_s
             None => return,
         };
 
-        let host = match url.host_str() {
-            Some(h) => h.trim_start_matches("www.").to_string(),
-            None => continue,
-        };
-
-        if seen.check_and_set(&host) {
+        let Some(host) = url.host_str() else { continue };
+        let host = host.strip_prefix("www.").unwrap_or(host);
+  
+        if seen.check_and_set(host) {
             continue;       
         }
 
