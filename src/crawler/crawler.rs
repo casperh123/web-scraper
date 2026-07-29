@@ -14,7 +14,7 @@ pub async fn crawl_from_seed(
     seeds: Vec<Url>
     ) 
 {
-    let semaphore = Arc::new(Semaphore::new(1000));
+    let semaphore = Arc::new(Semaphore::new(400));
     let mut crawled_count = 0;
     
     for seed in seeds {
@@ -45,7 +45,7 @@ pub async fn crawl_from_seed(
 }
 
 pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channel: UnboundedSender<Url>, crawled: UnboundedSender<CrawlResult>){
-    let mut seen: Bloom<str> = Bloom::new_for_fp_rate(100_000, 0.01).unwrap();
+    let mut seen: Bloom<str> = Bloom::new_for_fp_rate(70_000, 0.01).unwrap();
     let mut links: Vec<String> = vec!["/".to_string()];
     let mut total_time_ms = 0;
     let mut links_crawled = 0;
@@ -131,7 +131,7 @@ fn process_links(
             let _ = found_domains_channel.send(resolved_url);
         } else {
             let path = resolved_url.path();
-            if !seen.check_and_set(path) && links.len() < 1000 {
+            if !seen.check_and_set(path) {
                 links.push(path.to_string());            
             }
         }
