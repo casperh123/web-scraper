@@ -1,14 +1,3 @@
-[package]
-name = "crawler-demo"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-reqwest = { version = "0.13.2", features = ["gzip", "brotli", "deflate", "hickory-dns"]}
-tokio = { version = "1.50.0", features = ["full"]}
-sea-orm = { version = "2.0.0-rc", features = ["schema-sync", "entity-registry", "sqlx-postgres", "runtime-tokio-rustls"] }
-bloomfilter = "3.0.1"
-tl = { version = "0.7.8", features = []}
-log = "0.4.33"
-env_logger = "0.11.11"
-hickory-resolver = "0.26.1"
+[workspace]
+members = ["database", "crawler", "api", "migration"]
+resolver = "2"
