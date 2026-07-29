@@ -71,7 +71,7 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
         let response_body = match response.text().await {
             Ok(body) => body,
             Err(e) => {
-                log::warn!("Failed to parse body for {full_link}: {e:?}");
+                log::info!("Failed to parse body for {full_link}: {e:?}");
                 continue;
             },
         };
