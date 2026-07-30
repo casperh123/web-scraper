@@ -14,7 +14,7 @@ pub async fn crawl_from_seed(
     seeds: Vec<Url>
     ) 
 {
-    let semaphore = Arc::new(Semaphore::new(4000));
+    let semaphore = Arc::new(Semaphore::new(300));
     let mut crawled_count = 0;
     
     for seed in seeds {
@@ -82,6 +82,10 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
 
         links_crawled += 1;
         total_time_ms += ttfb;
+
+        if(links_crawled > 50_000) {
+            break;
+        }
     }
     
     let average_ttfb_ms = match links_crawled {
