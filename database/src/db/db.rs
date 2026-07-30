@@ -16,7 +16,7 @@ use crate::models::website::{
 
 static DB: OnceCell<DatabaseConnection> = OnceCell::const_new();
 
-async fn connection() -> Result<&'static DatabaseConnection, DbErr> {
+pub async fn connection() -> Result<&'static DatabaseConnection, DbErr> {
     DB.get_or_try_init(|| async {
         let database_url =
             std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -26,19 +26,20 @@ async fn connection() -> Result<&'static DatabaseConnection, DbErr> {
     .await
 }
 
-pub async fn get_websites() -> Result<Vec<Model>, DbErr> {
-    let db = connection().await?;
+pub async fn get_websites_by_url(db: &DatabaseConnection, url: &str) -> Result<Option<Model>, DbErr> {
+    Website::find_by_id(url).one(db).await
+}
 
+pub async fn get_websites(db: &DatabaseConnection) -> Result<Vec<Model>, DbErr> {
     Website::find().all(db).await
 }
 
 pub async fn add_website(
+    db: &DatabaseConnection,
     url: String,
     average_ttfb_ms: i32,
     links_crawled: i32,
 ) -> Result<Model, DbErr> {
-    let db = connection().await?;
-
     ActiveModel {
         url: Set(url),
         average_ttfb_ms: Set(average_ttfb_ms),

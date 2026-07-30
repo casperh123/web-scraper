@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+actix-web = "4.14.0"
+database = { path = "../database/" }
+dotenvy = "0.15.7"
+sea-orm = "2.0.0"

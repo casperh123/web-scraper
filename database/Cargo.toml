@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 sea-orm = { version = "2.0.0-rc", features = ["schema-sync", "entity-registry", "sqlx-postgres", "runtime-tokio-rustls"] }
+serde = "1.0.229"
 tokio = {
     version = "1",
     features = ["sync"]
