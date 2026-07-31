@@ -1,5 +1,5 @@
-use serde::Serialize;
 use database::models::website;
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct WebsiteDto {
