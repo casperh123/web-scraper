@@ -83,7 +83,7 @@ pub async fn crawl_domain(client: Arc<Client>, domain: Url, found_domains_channe
         links_crawled += 1;
         total_time_ms += ttfb;
 
-        if(links_crawled > 50_000) {
+        if links_crawled > 50_000 {
             break;
         }
     }
