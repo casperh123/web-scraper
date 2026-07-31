@@ -1,10 +1,16 @@
-use database::{db::db::get_websites, models::website};
+use database::{db::db::get_websites};
 use sea_orm::{DatabaseConnection, DbErr};
+
+use crate::websites::dto::WebsiteDto;
 
 pub async fn list_websites(
     db: &DatabaseConnection,
-) -> Result<Vec<website::Model>, DbErr> {
-    let websites = get_websites(db).await?;
+) -> Result<Vec<WebsiteDto>, DbErr> {
+    let websites = get_websites(db)
+        .await?
+        .into_iter()
+        .map(WebsiteDto::from)
+        .collect();
 
     Ok(websites)
 }

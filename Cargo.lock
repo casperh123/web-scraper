@@ -319,6 +319,7 @@ dependencies = [
  "database",
  "dotenvy",
  "sea-orm",
+ "serde",
 ]
 
 [[package]]
@@ -1088,7 +1089,6 @@ name = "database"
 version = "0.1.0"
 dependencies = [
  "sea-orm",
- "serde",
  "tokio",
 ]
 
