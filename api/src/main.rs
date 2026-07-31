@@ -1,5 +1,5 @@
 use actix_web::{web, App, HttpServer};
-use database::db::db::connection;
+use database::db::connection::connection;
 use sea_orm::DatabaseConnection;
 mod websites;
 

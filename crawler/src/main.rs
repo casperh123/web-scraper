@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 use crawler_demo::{crawler::{crawl_result::CrawlResult, crawler::crawl_from_seed, discovery::filter_domains, seeds::get_seeds}};
-use database::db::db::{add_website, connection};
+use database::db::{connection::{add_website, connection}, website_operations::add_website};
 use reqwest::{Client};
 use sea_orm::DatabaseConnection;
 use tokio::sync::mpsc::{self, UnboundedReceiver};

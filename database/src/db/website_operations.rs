@@ -1,31 +1,10 @@
-use sea_orm::{
-    ActiveModelTrait,
-    ActiveValue::Set,
-    Database,
-    DatabaseConnection,
-    DbErr,
-    EntityTrait,
-};
-use tokio::sync::OnceCell;
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, DbErr, EntityTrait};
 
 use crate::models::website::{
     ActiveModel,
     Entity as Website,
     Model,
 };
-
-static DB: OnceCell<DatabaseConnection> = OnceCell::const_new();
-
-pub async fn connection() -> Result<&'static DatabaseConnection, DbErr> {
-    DB.get_or_try_init(|| async {
-        let database_url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-        let db = Database::connect(database_url).await?;
-        db.get_schema_registry("database::models::*").sync(&db).await?;
-        Ok(db)
-    })
-    .await
-}
 
 pub async fn get_websites_by_url(db: &DatabaseConnection, url: &str) -> Result<Option<Model>, DbErr> {
     Website::find_by_id(url).one(db).await
